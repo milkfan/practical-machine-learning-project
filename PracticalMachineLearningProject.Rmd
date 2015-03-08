@@ -1,0 +1,118 @@
+---
+title: "Practical Machine Learning Project"
+author: "ChenLong"
+output: html_document
+---
+
+```{r setup, cache = F, echo = F, message = F, warning = F, tidy = F}
+library(knitr)
+opts_chunk$set(message = F, error = F, warning = F, fig.align = 'center', dpi = 100, cache=T, tidy = T, results = "markup", cache.path = '.cache/', fig.path = 'fig/')
+```
+
+## Backgound
+Using wearable devices is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, subjects were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to use data from accelerometers on the belt, forearm, arm, and dumbell to build a model predicting the quality of the activity. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Exploratory Analysis
+
+The links for the training and test data are given below:
+
+* https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+* https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+First to load the data:
+
+```{r load}
+if (!file.exists("pml-training.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                  destfile = "pml-training.csv")
+}
+if (!file.exists("pml-testing.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                  destfile = "pml-testing.csv")
+}
+data <- read.csv("pml-training.csv", row.names = 1, header = TRUE, na.strings = c("NA",""))
+target <- read.csv("pml-testing.csv", row.names = 1, header = TRUE, na.strings = c("NA",""))
+library(caret)
+```
+
+Next to explore the data set:
+
+```{r exploratory}
+dim(data)
+table(data$classe)
+```
+We can see it's a very large data set with `r dim(data)[1]` observations and `r dim(data)[2]` variables. Clearly not all variables should be included in the predicting model. We need to find a way to trim the number of predictors. And the numbers of the 5 classes are well balanced so no need of carrying out special resampling.
+
+## Preprocessing
+
+One way is to remove predictors of near zero variance.
+
+```{r remove zero variance}
+pos <- nearZeroVar(data)
+training <- data[, -pos]
+```
+
+Use `str(data)` we can see there are a lot missing values in some variables. So next to remove those varaibles with more than 50% missing values is a sensible approach since these variables will not provide much power for prediction.
+
+```{r remove missing values}
+num_row = nrow(training)
+a = 0.5
+notNA <- function(x){
+  ifelse(sum(is.na(training[, x])) > a * num_row, FALSE, TRUE)
+}
+nna <- sapply(colnames(training), notNA)
+training <- training[, nna]
+```
+
+And we need to remove user name and timestamp from the varaibles.
+
+```{r remove time and name}
+training <- subset(training, select=-c(user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp))
+sapply(training[1, ], class)
+```
+
+Now we still have `r dim(training)[2]` predictors. They are all numeric or integer variables. Which means we can use principal analysis to reduce the number of predictors even further. I choose to include this step in the `train` function.
+
+## Building the model
+
+```{r data set partition}
+inTrain <- createDataPartition(training$classe, p=0.7, list=FALSE)
+train_data<- training[inTrain, ]
+test_data <- training[-inTrain, ]
+```
+
+The method I choose is random forest combined with cross-validation:
+
+```{r training}
+modFit <- train(classe ~ ., data=train_data, method="rf", preProcess="pca",
+               trControl=trainControl(method="cv", number=5))
+modFit
+```
+
+## Validation
+Let's check the accuracy on the test set.
+
+```{r validation}
+predicted <- predict(modFit, test_data)
+accuracy <- sum(predicted == test_data$classe) / length(predicted)
+```
+
+This means we achieved `r 100*accuracy`% accuracy on the test set.
+
+## Test cases
+
+```{r test cases}
+answers <- predict(modFit, target)
+answers
+```
+
+```{r output}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
